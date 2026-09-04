@@ -134,9 +134,10 @@ The client listed frontend pages (`/home`, `/about`, `/contact`, `/weekly-menu`,
 - `GET /api/v1/weekly-menu` — the 5 daily specials grouped by weekday, for `/weekly-menu`
 - `GET /api/v1/foods/{id}` — food detail including its resolved add-ons (global + food-specific)
 - `GET /api/v1/foods?search=&category_id=&day_of_week=&available=true` — filtered listing, used for search/menu filtering
-- `GET|POST /api/v1/cart` — get-or-create a cart for a session token (see Section 8 for session-token handling)
-- `POST/PATCH/DELETE /api/v1/cart/items/{item_id}` — add/update/remove a cart line
-- `GET/POST/DELETE /api/v1/favourites` — list/add/remove favourites for a session token
+
+**[dropped — built client-side instead]** Cart and favourites are held in the Next.js frontend (e.g. `localStorage`), not the backend. The `GET|POST /api/v1/cart`, `POST/PATCH/DELETE /api/v1/cart/items/{item_id}`, and `GET/POST/DELETE /api/v1/favourites` endpoints described in earlier drafts of this doc were never built; the `Cart`/`CartItem`/`CartItemAddon`/`Favourite` tables from Section 4 exist in the schema but are unused. Revisit only if the client asks for cross-device cart persistence.
+
+**[not yet scoped — ask before building]**
 - `POST /api/v1/orders` — create an order (from the current cart, and/or with a `custom_description` for a bespoke request); returns the order, its invoice number, and a ready-to-use `whatsapp_url`
 - `GET /api/v1/orders/{id}` — order confirmation lookup (by id + a short token, not enumerable — don't let random order IDs leak other customers' data)
 - `GET /api/v1/orders/{id}/invoice` — download the invoice as PDF
@@ -237,10 +238,10 @@ alembic.ini
 
 1. **[done] Scaffolding:** pyproject + dependency setup, FastAPI app skeleton, `pydantic-settings` config, Alembic init, ruff/mypy/pre-commit config, empty pytest setup with a working DB fixture. No Docker — local PostgreSQL 18, `venv` + `pip` (see `specs/00-overview.md`).
 2. **[done] Core models + migrations:** every table in Section 4 (catalog, cart, favourites, orders, admin, settings, contact), two hand-reviewed Alembic revisions, `scripts/seed_menu.py` using Section 5's data. Tests: relationships load correctly, seed script is idempotent.
-3. **[pending] Public read APIs:** `/menu`, `/weekly-menu`, `/categories`, `/foods` (with filters), `/settings`. Tests for each, including the Menu-of-the-Day vs full-menu distinction.
-4. **[pending] Cart & Favourites:** session-token-scoped endpoints, quantity/min-order/availability validation on add-to-cart. Tests including the min-quantity and availability edge cases.
-5. **[pending] Orders & Checkout:** `POST /orders` (from cart and/or custom request), advance-order + day-of-week validation (Section 7, rules 1–2), invoice numbering, WhatsApp URL builder.
-6. **[pending] Invoice PDF:** Jinja2 template + WeasyPrint rendering, `GET /orders/{id}/invoice`.
+3. **[done] Public read APIs:** `/menu`, `/weekly-menu`, `/categories`, `/categories/{id}/foods`, `/foods` (with search/category/day-of-week/availability filters + pagination), `/foods/{id}` (resolved add-ons), `/settings`. Tests: `tests/test_menu.py`.
+4. **[dropped] Cart & Favourites:** **not built server-side** — the client decided to hold cart and favourites state in the Next.js frontend (e.g. `localStorage`) instead of a session-token-scoped backend cart. No `Cart`/`CartItem`/`CartItemAddon`/`Favourite` endpoints exist; the tables from plan 02 are unused unless this decision is revisited.
+5. **[pending] Orders & Checkout:** `POST /orders` (from cart and/or custom request), advance-order + day-of-week validation (Section 7, rules 1–2), invoice numbering, WhatsApp URL builder. Not yet scoped — ask before building.
+6. **[pending] Invoice PDF:** Jinja2 template + WeasyPrint rendering, `GET /orders/{id}/invoice`. Not yet scoped — ask before building.
 7. **[done] Admin auth & RBAC:** JWT access/refresh tokens, `require_role` dependency declared explicitly per admin router. Tests: login, token validation/expiry/type-mismatch, role enforcement (`tests/test_admin_auth.py`).
 8. **[done] Admin CRUD:** categories/foods/add-ons (create/update for staff+owner, delete owner-only, slug-conflict handling), staff management (owner-only, last-active-owner guard), order management (list/filter, forward-only status transitions, custom-order quoting), settings update (owner-only). Tests: `tests/test_admin_permissions.py`, `tests/test_admin_crud.py`.
 9. **[done] Contact form:** public `POST /contact`, admin inbox list/mark-read (`tests/test_contact.py`).

@@ -31,6 +31,10 @@ class FoodRead(BaseModel):
     day_of_week: DayOfWeek | None
 
 
+class FoodDetailRead(FoodRead):
+    addons: list[AddOnRead]
+
+
 class CategoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -40,3 +44,12 @@ class CategoryRead(BaseModel):
     description: str | None
     display_order: int
     is_active: bool
+
+
+class CategoryWithFoods(CategoryRead):
+    foods: list[FoodRead]
+
+
+class WeekdayGroup(BaseModel):
+    day_of_week: DayOfWeek
+    food: FoodRead

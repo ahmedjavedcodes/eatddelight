@@ -4,6 +4,7 @@ Every handled error is rendered as ``{"detail": ..., "code": <stable_snake_case>
 Concrete ``DomainError`` subclasses are added by the plan that first needs them.
 """
 
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -31,6 +32,51 @@ class DomainError(Exception):
             self.status_code = status_code
 
 
+class AuthError(DomainError):
+    status_code = 401
+    code = "unauthorized"
+
+
+class ForbiddenError(DomainError):
+    status_code = 403
+    code = "forbidden"
+
+
+class NotFoundError(DomainError):
+    status_code = 404
+    code = "not_found"
+
+
+class SlugConflictError(DomainError):
+    status_code = 409
+    code = "slug_conflict"
+
+
+class CategoryInUseError(DomainError):
+    status_code = 409
+    code = "category_in_use"
+
+
+class EmailConflictError(DomainError):
+    status_code = 409
+    code = "email_conflict"
+
+
+class InvalidStatusTransitionError(DomainError):
+    status_code = 409
+    code = "invalid_status_transition"
+
+
+class NotACustomOrderError(DomainError):
+    status_code = 409
+    code = "not_a_custom_order"
+
+
+class LastOwnerError(DomainError):
+    status_code = 409
+    code = "last_owner"
+
+
 async def domain_error_handler(_: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, DomainError):  # pragma: no cover - defensive
         raise exc
@@ -54,5 +100,5 @@ async def validation_exception_handler(_: Request, exc: Exception) -> JSONRespon
         raise exc
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "code": "validation_error"},
+        content={"detail": jsonable_encoder(exc.errors()), "code": "validation_error"},
     )

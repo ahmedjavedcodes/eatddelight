@@ -1,25 +1,22 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.models  # noqa: F401  (registers every table on Base.metadata)
 from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
 
-# Import model modules so every table is registered on Base.metadata.
-# Plan 02 adds app/models/__init__.py; until then this import is a no-op-safe try.
-try:  # noqa: SIM105
-    import app.models  # noqa: F401
-except ModuleNotFoundError:
-    pass
-
 config = context.config
 
-# Connection URL comes from the app settings (.env), not alembic.ini.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# URL precedence: ALEMBIC_DATABASE_URL env var (used by the test harness) then
+# the app settings (.env DATABASE_URL). alembic.ini is never the source.
+_url = os.getenv("ALEMBIC_DATABASE_URL") or get_settings().database_url
+config.set_main_option("sqlalchemy.url", _url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

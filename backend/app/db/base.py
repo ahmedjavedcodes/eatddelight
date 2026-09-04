@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import MetaData, func
+from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 NAMING_CONVENTION = {
@@ -17,10 +17,11 @@ class Base(DeclarativeBase):
 
 
 class TimestampMixin:
-    """Adds server-managed ``created_at`` / ``updated_at`` columns."""
+    """Adds server-managed ``created_at`` / ``updated_at`` columns (timezone-aware)."""
 
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
     )

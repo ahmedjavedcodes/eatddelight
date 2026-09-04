@@ -75,7 +75,8 @@ ContactMessage — inbound contact form submissions
 - `id`, `session_token`, `food_id`, `created_at` — unique constraint on `(session_token, food_id)`
 
 ### Order / OrderItem / order_item_addons
-- `Order`: `id`, `invoice_number` (unique, e.g. `DD-20260904-0001`), `customer_name`, `customer_phone`, `order_source` (enum: `catalog` | `custom_request`), `requested_date` (date — when the food should be ready, must be ≥ tomorrow in Asia/Karachi time), `status` (enum: `pending` → `confirmed` → `preparing` → `ready` → `delivered`, plus `cancelled`), `subtotal`, `total`, `is_custom` (bool), `custom_description` (nullable text — used when `order_source = custom_request`), `admin_notes` (nullable), `whatsapp_link_sent_at` (nullable timestamp), `created_at`
+- `Order`: `id`, `invoice_number` (unique, e.g. `DD-20260904-0001`), `lookup_token` (opaque string, indexed — non-enumerable order lookup), `customer_name`, `customer_phone`, `order_source` (enum: `catalog` | `custom_request`), `requested_date` (date — when the food should be ready, must be ≥ tomorrow in Asia/Karachi time), `status` (enum, **resolved**: `pending` → `confirmed` → `completed`, plus `cancelled` reachable from any non-terminal state; forward-only transitions), `subtotal`, `total` (both nullable — filled at order time for catalog orders, by the owner's quote for custom requests), `is_custom` (bool), `custom_description` (nullable text — used when `order_source = custom_request`), `admin_notes` (nullable), `whatsapp_link_sent_at` (nullable timestamp), `created_at`
+- **Resolved — structured custom-order fields** (all nullable): `servings` (int), `budget_range` (str), `occasion` (str), `event_date` (date, subject to the same ≥-tomorrow rule as `requested_date` when supplied). `custom_description` remains the only required field for a `custom_request` order.
 - `OrderItem`: `id`, `order_id`, `food_id` (nullable — null for a pure custom request line), `quantity`, `unit_price` (snapshot, not a live FK lookup), `notes`
 - `order_item_addons`: `order_item_id`, `addon_id`, `quantity`, `unit_price` (snapshot)
 
@@ -232,20 +233,26 @@ alembic.ini
 
 ## 13. Build Plan (execute in this order)
 
-1. **Scaffolding:** pyproject + dependency setup, FastAPI app skeleton, `pydantic-settings` config, docker-compose Postgres, Alembic init, ruff/mypy/pre-commit config, empty pytest setup with a working DB fixture (a trivial `test_health.py` hitting a `/health` endpoint should pass before moving on).
-2. **Core models + migrations:** `Category`, `Food`, `AddOn`, `food_addons`. Write `scripts/seed_menu.py` using Section 5's data. Tests: relationships load correctly, seed script is idempotent (safe to re-run).
-3. **Public read APIs:** `/menu`, `/weekly-menu`, `/categories`, `/foods` (with filters), `/settings`. Tests for each, including the Menu-of-the-Day vs full-menu distinction.
-4. **Cart & Favourites:** models, session-token-scoped endpoints, quantity/min-order/availability validation on add-to-cart. Tests including the min-quantity and availability edge cases.
-5. **Orders & Checkout:** `Order`/`OrderItem`/`order_item_addons` models, `POST /orders` (from cart and/or custom request), advance-order + day-of-week validation (Section 7, rules 1–2), invoice numbering, WhatsApp URL builder. Tests covering every validation rule and the message/URL format.
-6. **Invoice PDF:** Jinja2 template + WeasyPrint rendering, `GET /orders/{id}/invoice`. Test that it returns a valid PDF with correct line items/total.
-7. **Admin auth & RBAC:** `AdminUser` model + seed owner account, JWT login, `require_role` dependency. Tests for login, token validation, and role enforcement.
-8. **Admin CRUD:** categories/foods/add-ons (create/update for staff+owner, delete owner-only), staff management (owner-only), order management (list/update status, set quote total for custom orders), settings update. Tests per permission boundary.
-9. **Contact form:** `ContactMessage` model, public POST, admin list/mark-read.
-10. **Hardening:** CORS config for the actual frontend origin(s), request rate limiting on public write endpoints (cart/orders/contact — cheap abuse vector with no auth), structured logging, consistent error response shape, OpenAPI docs cleanup (tags, examples, response models everywhere).
-11. **Final pass:** full test suite green, ruff/mypy clean, review the seed data against the flyer images once more for typos (the flyers themselves have some, e.g. "Khauasay" vs "Khousay", "Ceasar" vs "Caesar", "Alo Goshat"/"Alo Palak" vs "Aloo" — decide with the client whether to correct these in the displayed name or keep them verbatim).
+> Status markers reflect the actual build state, not the original prescribed order — admin auth/CRUD/contact (phases 7–9) shipped before the public catalog/cart/orders/invoice phases (3–6). See `backend/specs/00-overview.md` for the authoritative spec-driven build state (`scaffolded` → `schema-ready` → ... → `admin-complete`).
+
+1. **[done] Scaffolding:** pyproject + dependency setup, FastAPI app skeleton, `pydantic-settings` config, Alembic init, ruff/mypy/pre-commit config, empty pytest setup with a working DB fixture. No Docker — local PostgreSQL 18, `venv` + `pip` (see `specs/00-overview.md`).
+2. **[done] Core models + migrations:** every table in Section 4 (catalog, cart, favourites, orders, admin, settings, contact), two hand-reviewed Alembic revisions, `scripts/seed_menu.py` using Section 5's data. Tests: relationships load correctly, seed script is idempotent.
+3. **[pending] Public read APIs:** `/menu`, `/weekly-menu`, `/categories`, `/foods` (with filters), `/settings`. Tests for each, including the Menu-of-the-Day vs full-menu distinction.
+4. **[pending] Cart & Favourites:** session-token-scoped endpoints, quantity/min-order/availability validation on add-to-cart. Tests including the min-quantity and availability edge cases.
+5. **[pending] Orders & Checkout:** `POST /orders` (from cart and/or custom request), advance-order + day-of-week validation (Section 7, rules 1–2), invoice numbering, WhatsApp URL builder.
+6. **[pending] Invoice PDF:** Jinja2 template + WeasyPrint rendering, `GET /orders/{id}/invoice`.
+7. **[done] Admin auth & RBAC:** JWT access/refresh tokens, `require_role` dependency declared explicitly per admin router. Tests: login, token validation/expiry/type-mismatch, role enforcement (`tests/test_admin_auth.py`).
+8. **[done] Admin CRUD:** categories/foods/add-ons (create/update for staff+owner, delete owner-only, slug-conflict handling), staff management (owner-only, last-active-owner guard), order management (list/filter, forward-only status transitions, custom-order quoting), settings update (owner-only). Tests: `tests/test_admin_permissions.py`, `tests/test_admin_crud.py`.
+9. **[done] Contact form:** public `POST /contact`, admin inbox list/mark-read (`tests/test_contact.py`).
+10. **[pending] Hardening:** CORS config for the actual frontend origin(s), request rate limiting on public write endpoints (cart/orders/contact — cheap abuse vector with no auth), structured logging, consistent error response shape, OpenAPI docs cleanup (tags, examples, response models everywhere), security headers.
+11. **[pending] Final pass:** full test suite green, ruff/mypy clean, review the seed data against the flyer images once more for typos (the flyers themselves have some, e.g. "Khauasay" vs "Khousay", "Ceasar" vs "Caesar", "Alo Goshat"/"Alo Palak" vs "Aloo" — decide with the client whether to correct these in the displayed name or keep them verbatim).
 
 ## 14. Open Questions for the Client (flag, don't guess silently)
 
-- Should `staff` be allowed to edit `SiteSettings` (About/Contact copy), or is that owner-only too?
-- For custom order requests, is any structured input needed (servings count, budget range, occasion) beyond a free-text description?
-- Order `status` values above are a reasonable default (`pending → confirmed → preparing → ready → delivered`, plus `cancelled`) — confirm this matches how the kitchen actually tracks an order.
+**Resolved** (see `backend/specs/00-overview.md`, "Resolved client decisions"):
+- `staff` may **not** edit `SiteSettings` — `PUT /admin/settings` is owner-only; staff get 403.
+- Custom order requests carry four optional structured fields — `servings` (int), `budget_range` (str), `occasion` (str), `event_date` (date) — alongside the required `custom_description`.
+- Order `status` is `pending → confirmed → completed`, plus `cancelled` reachable from any non-terminal state. Transitions are forward-only (`invalid_status_transition` on backward/from-terminal moves). This supersedes the 5-status pipeline this section originally proposed.
+
+Still open:
+- None currently tracked — re-raise here if a new client decision is needed before the next phase.

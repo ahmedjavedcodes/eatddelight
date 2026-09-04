@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -30,8 +31,9 @@ from sqlalchemy.pool import NullPool
 
 from app.api.v1.deps import get_db
 from app.core.config import get_settings
+from app.core.security import create_access_token, hash_password
 from app.main import create_app
-from app.models import AddOn, Category, Food
+from app.models import AddOn, AdminRole, AdminUser, Category, Food, Order, OrderSource
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -178,6 +180,100 @@ async def make_food(db_session: AsyncSession, make_category: CategoryFactory) ->
         db_session.add(food)
         await db_session.flush()
         return food
+
+    return _make
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def owner_user(db_session: AsyncSession) -> AdminUser:
+    user = AdminUser(
+        name="Test Owner",
+        email="owner@test.local",
+        hashed_password=hash_password("password123"),
+        role=AdminRole.owner,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    return user
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def staff_user(db_session: AsyncSession) -> AdminUser:
+    user = AdminUser(
+        name="Test Staff",
+        email="staff@test.local",
+        hashed_password=hash_password("password123"),
+        role=AdminRole.staff,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    return user
+
+
+def _auth_headers(user: AdminUser) -> dict[str, str]:
+    token = create_access_token(user.id, user.role.value)
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _authed_client(
+    db_session: AsyncSession, user: AdminUser
+) -> AsyncGenerator[AsyncClient, None]:
+    app = create_app()
+
+    async def _override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    transport = ASGITransport(app=app)
+    headers = _auth_headers(user)
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers=headers
+    ) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def owner_client(
+    db_session: AsyncSession, owner_user: AdminUser
+) -> AsyncGenerator[AsyncClient, None]:
+    async for c in _authed_client(db_session, owner_user):
+        yield c
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def staff_client(
+    db_session: AsyncSession, staff_user: AdminUser
+) -> AsyncGenerator[AsyncClient, None]:
+    async for c in _authed_client(db_session, staff_user):
+        yield c
+
+
+OrderFactory = Callable[..., Awaitable[Order]]
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def make_order(db_session: AsyncSession) -> OrderFactory:
+    counter = itertools.count(1)
+
+    async def _make(**kwargs: Any) -> Order:
+        n = next(counter)
+        data: dict[str, Any] = {
+            "invoice_number": f"DD-TEST-{n:04d}",
+            "lookup_token": f"tok{n:04d}",
+            "customer_name": f"Customer {n}",
+            "customer_phone": "03001234567",
+            "order_source": OrderSource.catalog,
+            "requested_date": date.today() + timedelta(days=1),
+            "is_custom": False,
+        }
+        data.update(kwargs)
+        order = Order(**data)
+        db_session.add(order)
+        await db_session.flush()
+        return order
 
     return _make
 

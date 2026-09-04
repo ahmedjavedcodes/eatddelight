@@ -44,14 +44,14 @@ class OrderSource(enum.StrEnum):
     catalog = "catalog"; custom_request = "custom_request"
 
 class OrderStatus(enum.StrEnum):
-    pending = "pending"; confirmed = "confirmed"; preparing = "preparing"
-    ready = "ready"; delivered = "delivered"; cancelled = "cancelled"
+    pending = "pending"; confirmed = "confirmed"; completed = "completed"
+    cancelled = "cancelled"
 
 class AdminRole(enum.StrEnum):
     owner = "owner"; staff = "staff"
 ```
 
-Mapped with `sa.Enum(DayOfWeek, name="day_of_week")` etc. — named types, created explicitly in the first migration. `OrderStatus` value list is the §14 open question; encode exactly this for now.
+Mapped with `sa.Enum(DayOfWeek, name="day_of_week")` etc. — named types, created explicitly in the first migration. **Revised from the original 6-value draft** (`pending/confirmed/preparing/ready/delivered/cancelled`) via the `/spec 02` interview, resolving the §14 open question: the simplified 4-value set is `pending → confirmed → completed` (+ `cancelled` from any non-terminal state), forward-only transitions.
 
 ## 3. Entity field tables
 
@@ -178,7 +178,13 @@ Constraint: **unique `(session_token, food_id)`** → `uq_favourites_session_tok
 | `custom_description` | `Text` | nullable; used when `order_source = custom_request` |
 | `admin_notes` | `Text` | nullable |
 | `whatsapp_link_sent_at` | tz `datetime` | nullable — set when frontend reports the handoff (optional endpoint) |
+| `servings` | `int` | nullable — **structured custom-order field**, added via the `/spec 02` interview |
+| `budget_range` | `str(60)` | nullable — structured custom-order field |
+| `occasion` | `str(120)` | nullable — structured custom-order field |
+| `event_date` | `date` | nullable — structured custom-order field; when set, subject to the same ≥ tomorrow Asia/Karachi rule as `requested_date` |
 | `created_at` | tz `datetime` | (no `updated_at` in §4; add it anyway via `TimestampMixin` for admin status tracking — note this as a minor addition) |
+
+All four structured fields are optional; `custom_description` remains the only required field when `order_source = custom_request`.
 
 Relationships: `items: Mapped[list["OrderItem"]]` (`cascade="all, delete-orphan"`, `lazy="selectin"`).
 
@@ -337,7 +343,7 @@ async def seed(session: AsyncSession) -> None:
 - `OrderItem.unit_price` persists independently of later `Food.price` change (snapshot behaviour at the column level).
 
 ### `tests/test_seed.py`
-- Run `seed()` on a fresh DB → assert exact counts: 11 categories, 5 daily + 39 full-menu = 44 foods, 1 `SiteSettings` (id=1), 1 owner.
+- Run `seed()` on a fresh DB → assert exact counts: 11 categories, 5 daily + 37 full-menu = 42 foods, 1 `SiteSettings` (id=1), 1 owner. (Corrected from an earlier draft's arithmetic error — §5's itemized full-menu list totals 37, not 39.)
 - Run `seed()` a **second** time on the same session/DB → identical counts, no `IntegrityError`, prices unchanged.
 - Change a food's price by hand, re-run `seed()` → price is reset to the seed value (upsert updates mutable fields) — document this as intended.
 - Owner already present with a different password → `seed()` does **not** change `hashed_password`.

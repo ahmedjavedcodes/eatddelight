@@ -1,33 +1,39 @@
 """Shared test fixtures.
 
 - A dedicated Postgres test database (``TEST_DATABASE_URL`` -> ``eatddelight_test``),
-  created if missing, schema rebuilt once per session.
+  created if missing; the ``public`` schema is dropped and rebuilt once per session
+  by running ``alembic upgrade head`` in a subprocess (so tests exercise the real
+  migrations without nesting event loops).
 - Per-test isolation via a SAVEPOINT that is rolled back on teardown.
+- All async fixtures and tests share the session event loop (see pyproject).
 - An ``httpx.AsyncClient`` bound to the ASGI app with ``get_db`` overridden.
-
-Factory fixtures are stubbed here and fleshed out by later plans.
+- Factory fixtures: ``make_category`` / ``make_food`` / ``make_addon``.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator, Iterator
+import itertools
+import os
+import subprocess
+import sys
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import asyncpg
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.engine.url import make_url
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.api.v1.deps import get_db
 from app.core.config import get_settings
-from app.db.base import Base
 from app.main import create_app
+from app.models import AddOn, Category, Food
 
-# Import model modules here once plan 02 adds them so Base.metadata is complete:
-#   import app.models
+_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _test_database_url() -> str:
@@ -35,19 +41,22 @@ def _test_database_url() -> str:
     url = settings.test_database_url or settings.database_url
     if url == settings.database_url:
         raise RuntimeError(
-            "TEST_DATABASE_URL is not set; refusing to run the test suite against the "
-            "development database. Set it in .env (e.g. .../eatddelight_test)."
+            "TEST_DATABASE_URL is not set; refusing to run the suite against the dev "
+            "database. Set it in .env (e.g. .../eatddelight_test)."
         )
     return url
 
 
-async def _ensure_database(async_url: str) -> None:
-    """Create the target database if it does not exist yet."""
+def _pg_dsn(async_url: str, *, database: str | None = None) -> str:
     url = make_url(async_url)
-    db_name = url.database
+    name = database or url.database
+    return f"postgresql://{url.username}:{url.password}@{url.host}:{url.port or 5432}/{name}"
+
+
+async def _ensure_database(async_url: str) -> None:
+    db_name = make_url(async_url).database
     assert db_name is not None
-    admin_dsn = f"postgresql://{url.username}:{url.password}@{url.host}:{url.port or 5432}/postgres"
-    conn = await asyncpg.connect(admin_dsn)
+    conn = await asyncpg.connect(_pg_dsn(async_url, database="postgres"))
     try:
         exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
         if not exists:
@@ -56,40 +65,54 @@ async def _ensure_database(async_url: str) -> None:
         await conn.close()
 
 
-async def _reset_schema(engine: AsyncEngine) -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-
-
-@pytest.fixture(scope="session")
-def _engine() -> Iterator[AsyncEngine]:
-    url = _test_database_url()
-    asyncio.run(_ensure_database(url))
-    engine = create_async_engine(url, poolclass=NullPool)
-    asyncio.run(_reset_schema(engine))
-    yield engine
-    asyncio.run(engine.dispose())
-
-
-@pytest_asyncio.fixture
-async def db_session(_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    connection: AsyncConnection = await _engine.connect()
-    transaction = await connection.begin()
-    session = AsyncSession(
-        bind=connection,
-        join_transaction_mode="create_savepoint",
-        expire_on_commit=False,
-    )
+async def _reset_public_schema(async_url: str) -> None:
+    conn = await asyncpg.connect(_pg_dsn(async_url))
     try:
-        yield session
+        await conn.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")
     finally:
-        await session.close()
-        await transaction.rollback()
-        await connection.close()
+        await conn.close()
 
 
-@pytest_asyncio.fixture
+def _run_alembic_upgrade(url: str) -> None:
+    env = {**os.environ, "ALEMBIC_DATABASE_URL": url}
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _engine() -> AsyncGenerator[AsyncEngine, None]:
+    url = _test_database_url()
+    await _ensure_database(url)
+    await _reset_public_schema(url)
+    _run_alembic_upgrade(url)
+    engine = create_async_engine(url, poolclass=NullPool)
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def db_session(_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
+    async with _engine.connect() as connection:
+        transaction = await connection.begin()
+        session = AsyncSession(
+            bind=connection,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+        )
+        try:
+            yield session
+        finally:
+            await session.close()
+            if transaction.is_active:
+                await transaction.rollback()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app = create_app()
 
@@ -103,19 +126,78 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides.clear()
 
 
-# --- Factory fixtures (stubs; filled in by plans 02+) ---
+# --- Factory fixtures ---
+
+CategoryFactory = Callable[..., Awaitable[Category]]
+FoodFactory = Callable[..., Awaitable[Food]]
+AddOnFactory = Callable[..., Awaitable[AddOn]]
 
 
-@pytest.fixture
-def make_category() -> None:  # pragma: no cover - stub
-    raise NotImplementedError("Defined in plan 02.")
+@pytest_asyncio.fixture(loop_scope="session")
+async def make_category(db_session: AsyncSession) -> CategoryFactory:
+    counter = itertools.count(1)
+
+    async def _make(**kwargs: Any) -> Category:
+        n = next(counter)
+        data: dict[str, Any] = {
+            "name": f"Category {n}",
+            "slug": f"category-{n}",
+            "display_order": n,
+            "is_active": True,
+        }
+        data.update(kwargs)
+        category = Category(**data)
+        db_session.add(category)
+        await db_session.flush()
+        return category
+
+    return _make
 
 
-@pytest.fixture
-def make_food() -> None:  # pragma: no cover - stub
-    raise NotImplementedError("Defined in plan 02.")
+@pytest_asyncio.fixture(loop_scope="session")
+async def make_food(db_session: AsyncSession, make_category: CategoryFactory) -> FoodFactory:
+    counter = itertools.count(1)
+
+    async def _make(**kwargs: Any) -> Food:
+        n = next(counter)
+        category = kwargs.pop("category", None)
+        if category is None and "category_id" not in kwargs:
+            category = await make_category()
+        data: dict[str, Any] = {
+            "name": f"Food {n}",
+            "price": Decimal("300.00"),
+            "min_order_quantity": 1,
+            "is_available": True,
+            "is_single_serving": True,
+            "requires_advance_order": True,
+        }
+        if category is not None:
+            data["category_id"] = category.id
+        data.update(kwargs)
+        food = Food(**data)
+        db_session.add(food)
+        await db_session.flush()
+        return food
+
+    return _make
 
 
-@pytest.fixture
-def make_addon() -> None:  # pragma: no cover - stub
-    raise NotImplementedError("Defined in plan 02.")
+@pytest_asyncio.fixture(loop_scope="session")
+async def make_addon(db_session: AsyncSession) -> AddOnFactory:
+    counter = itertools.count(1)
+
+    async def _make(**kwargs: Any) -> AddOn:
+        n = next(counter)
+        data: dict[str, Any] = {
+            "name": f"Add-on {n}",
+            "price": Decimal("50.00"),
+            "is_available": True,
+            "is_global": False,
+        }
+        data.update(kwargs)
+        addon = AddOn(**data)
+        db_session.add(addon)
+        await db_session.flush()
+        return addon
+
+    return _make

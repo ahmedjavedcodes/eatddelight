@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npx eslint *)",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -eq \"node\" } | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Write-Host \"Done\")",
+      "Bash(curl -s http://localhost:3000/favourites)",
+      "Bash(git add *)",
+      "Bash(git check-ignore *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}

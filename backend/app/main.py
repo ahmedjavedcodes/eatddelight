@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
@@ -40,6 +42,11 @@ def create_app() -> FastAPI:
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    media_root = Path(settings.media_root)
+    media_root.mkdir(parents=True, exist_ok=True)
+    app.mount("/media", StaticFiles(directory=media_root), name="media")
+
     return app
 
 

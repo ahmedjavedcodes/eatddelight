@@ -23,6 +23,7 @@ from app.models.enums import DayOfWeek
 if TYPE_CHECKING:
     from app.models.addon import AddOn
     from app.models.category import Category
+    from app.models.food_variant import FoodVariant
 
 food_addons = Table(
     "food_addons",
@@ -65,3 +66,9 @@ class Food(Base, TimestampMixin):
 
     category: Mapped[Category] = relationship(back_populates="foods")
     addons: Mapped[list[AddOn]] = relationship(secondary=food_addons, lazy="selectin")
+    variants: Mapped[list[FoodVariant]] = relationship(
+        back_populates="food",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="FoodVariant.display_order",
+    )

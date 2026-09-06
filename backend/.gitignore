@@ -29,3 +29,6 @@ htmlcov/
 
 # Local logs
 *.log
+
+# Locally uploaded product images (served from /media, not committed)
+/media/

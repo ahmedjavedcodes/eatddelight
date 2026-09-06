@@ -9,6 +9,7 @@ from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.food import Food
+    from app.models.food_variant import FoodVariant
 
 
 class Cart(Base, TimestampMixin):
@@ -31,11 +32,15 @@ class CartItem(Base, TimestampMixin):
         ForeignKey("carts.id", ondelete="CASCADE"), index=True, nullable=False
     )
     food_id: Mapped[int] = mapped_column(ForeignKey("foods.id", ondelete="CASCADE"), nullable=False)
+    variant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("food_variants.id", ondelete="CASCADE")
+    )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     notes: Mapped[str | None] = mapped_column(String(300))
 
     cart: Mapped[Cart] = relationship(back_populates="items")
     food: Mapped[Food] = relationship()
+    variant: Mapped[FoodVariant | None] = relationship()
     addon_links: Mapped[list[CartItemAddon]] = relationship(
         back_populates="cart_item", cascade="all, delete-orphan", lazy="selectin"
     )

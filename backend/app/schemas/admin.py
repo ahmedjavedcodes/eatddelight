@@ -1,8 +1,8 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import AdminRole, DayOfWeek, OrderSource, OrderStatus
 from app.schemas.catalog import AddOnRead, CategoryRead, FoodRead
@@ -28,6 +28,22 @@ class CategoryUpdate(BaseModel):
 # --- Food ---
 
 
+class FoodVariantIn(BaseModel):
+    label: Annotated[str, Field(max_length=60, min_length=1)]
+    price: Annotated[Decimal, Field(gt=0)]
+
+
+def _check_variants_distinct(variants: list[FoodVariantIn] | None) -> None:
+    if not variants:
+        return
+    labels = [v.label.strip().lower() for v in variants]
+    if len(labels) != len(set(labels)):
+        raise ValueError("variant labels must be unique for a product")
+    prices = [v.price for v in variants]
+    if len(prices) != len(set(prices)):
+        raise ValueError("variant prices must be different from each other")
+
+
 class FoodCreate(BaseModel):
     category_id: int
     name: Annotated[str, Field(max_length=160)]
@@ -39,6 +55,12 @@ class FoodCreate(BaseModel):
     is_single_serving: bool = True
     requires_advance_order: bool = True
     day_of_week: DayOfWeek | None = None
+    variants: list[FoodVariantIn] | None = None
+
+    @model_validator(mode="after")
+    def _validate_variants(self) -> Self:
+        _check_variants_distinct(self.variants)
+        return self
 
 
 class FoodUpdate(BaseModel):
@@ -52,6 +74,12 @@ class FoodUpdate(BaseModel):
     is_single_serving: bool | None = None
     requires_advance_order: bool | None = None
     day_of_week: DayOfWeek | None = None
+    variants: list[FoodVariantIn] | None = None
+
+    @model_validator(mode="after")
+    def _validate_variants(self) -> Self:
+        _check_variants_distinct(self.variants)
+        return self
 
 
 class FoodAvailabilityUpdate(BaseModel):
@@ -188,6 +216,13 @@ class SiteSettingsUpdate(BaseModel):
     opening_hours: Annotated[str, Field(max_length=300)] | None = None
 
 
+# --- Uploads ---
+
+
+class ImageUploadRead(BaseModel):
+    url: str
+
+
 __all__ = [
     "AddOnCreate",
     "AddOnRead",
@@ -200,6 +235,8 @@ __all__ = [
     "FoodCreate",
     "FoodRead",
     "FoodUpdate",
+    "FoodVariantIn",
+    "ImageUploadRead",
     "OrderItemAddonRead",
     "OrderItemRead",
     "OrderQuoteUpdate",

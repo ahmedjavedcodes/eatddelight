@@ -71,6 +71,10 @@ class OrderItem(Base):
     )
     food_id: Mapped[int | None] = mapped_column(ForeignKey("foods.id", ondelete="SET NULL"))
     food_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    variant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("food_variants.id", ondelete="SET NULL")
+    )
+    variant_label: Mapped[str | None] = mapped_column(String(60))
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     notes: Mapped[str | None] = mapped_column(String(300))

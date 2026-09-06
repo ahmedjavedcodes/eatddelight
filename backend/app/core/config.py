@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     rate_limit_public_write: str = "10/minute"
 
+    media_root: str = "media"
+    max_upload_mb: int = 5
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, value: Any) -> Any:

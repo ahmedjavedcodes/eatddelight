@@ -61,6 +61,123 @@ async def test_patch_food_availability(staff_client, make_food):
     assert resp.json()["is_available"] is False
 
 
+# --- Food variants ---
+
+
+async def test_create_food_with_variants_sets_min_price(staff_client, make_category):
+    category = await make_category()
+    resp = await staff_client.post(
+        "/api/v1/admin/foods",
+        json={
+            "category_id": category.id,
+            "name": "Chicken Karahi",
+            "price": "800.00",
+            "variants": [
+                {"label": "500g", "price": "800.00"},
+                {"label": "1kg", "price": "2000.00"},
+                {"label": "2kg", "price": "3000.00"},
+            ],
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert Decimal(body["price"]) == Decimal("800.00")
+    assert [v["label"] for v in body["variants"]] == ["500g", "1kg", "2kg"]
+    assert [Decimal(v["price"]) for v in body["variants"]] == [
+        Decimal("800.00"),
+        Decimal("2000.00"),
+        Decimal("3000.00"),
+    ]
+
+
+async def test_create_food_duplicate_variant_prices_rejected(staff_client, make_category):
+    category = await make_category()
+    resp = await staff_client.post(
+        "/api/v1/admin/foods",
+        json={
+            "category_id": category.id,
+            "name": "Confused Karahi",
+            "price": "800.00",
+            "variants": [
+                {"label": "500g", "price": "800.00"},
+                {"label": "1kg", "price": "800.00"},
+            ],
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_food_duplicate_variant_labels_rejected(staff_client, make_category):
+    category = await make_category()
+    resp = await staff_client.post(
+        "/api/v1/admin/foods",
+        json={
+            "category_id": category.id,
+            "name": "Confused Karahi",
+            "price": "800.00",
+            "variants": [
+                {"label": "1kg", "price": "800.00"},
+                {"label": "1kg", "price": "2000.00"},
+            ],
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_food_replaces_variants(staff_client, make_food):
+    food = await make_food(price=Decimal("500.00"))
+    resp = await staff_client.put(
+        f"/api/v1/admin/foods/{food.id}",
+        json={
+            "variants": [{"label": "Half", "price": "300.00"}, {"label": "Full", "price": "500.00"}]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["variants"]) == 2
+    assert Decimal(body["price"]) == Decimal("300.00")
+
+    resp = await staff_client.put(
+        f"/api/v1/admin/foods/{food.id}",
+        json={"variants": [{"label": "Only Size", "price": "450.00"}]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["variants"]) == 1
+    assert body["variants"][0]["label"] == "Only Size"
+
+
+async def test_update_food_clear_variants_keeps_existing_price(staff_client, make_food):
+    food = await make_food(price=Decimal("500.00"))
+    resp = await staff_client.put(
+        f"/api/v1/admin/foods/{food.id}",
+        json={"variants": [{"label": "Half", "price": "300.00"}]},
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["price"]) == Decimal("300.00")
+
+    resp = await staff_client.put(f"/api/v1/admin/foods/{food.id}", json={"variants": []})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["variants"] == []
+    assert Decimal(body["price"]) == Decimal("300.00")
+
+
+async def test_update_food_without_variants_key_leaves_variants_untouched(staff_client, make_food):
+    food = await make_food(price=Decimal("500.00"))
+    resp = await staff_client.put(
+        f"/api/v1/admin/foods/{food.id}",
+        json={"variants": [{"label": "Half", "price": "300.00"}]},
+    )
+    assert resp.status_code == 200
+
+    resp = await staff_client.put(f"/api/v1/admin/foods/{food.id}", json={"name": "Renamed Only"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Renamed Only"
+    assert len(body["variants"]) == 1
+
+
 # --- AddOns ---
 
 

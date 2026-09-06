@@ -45,6 +45,7 @@ async def get_food(
     food = await db.get(Food, food_id)
     if food is None:
         raise NotFoundError("food not found")
+    await db.refresh(food, attribute_names=["variants"])
     addons = await resolve_addons_for_food(db, food)
     return FoodDetailRead(
         **FoodRead.model_validate(food).model_dump(),

@@ -6,6 +6,7 @@ from app.models.contact_message import ContactMessage
 from app.models.enums import AdminRole, DayOfWeek, OrderSource, OrderStatus
 from app.models.favourite import Favourite
 from app.models.food import Food, food_addons
+from app.models.food_variant import FoodVariant
 from app.models.order import Order, OrderItem, OrderItemAddon
 from app.models.site_settings import SiteSettings
 
@@ -21,6 +22,7 @@ __all__ = [
     "DayOfWeek",
     "Favourite",
     "Food",
+    "FoodVariant",
     "Order",
     "OrderItem",
     "OrderItemAddon",

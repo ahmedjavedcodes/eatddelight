@@ -15,6 +15,15 @@ class AddOnRead(BaseModel):
     is_global: bool
 
 
+class FoodVariantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    label: str
+    price: Decimal
+    display_order: int
+
+
 class FoodRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -29,6 +38,7 @@ class FoodRead(BaseModel):
     is_single_serving: bool
     requires_advance_order: bool
     day_of_week: DayOfWeek | None
+    variants: list[FoodVariantRead]
 
 
 class FoodDetailRead(FoodRead):

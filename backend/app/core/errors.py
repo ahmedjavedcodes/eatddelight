@@ -77,6 +77,16 @@ class LastOwnerError(DomainError):
     code = "last_owner"
 
 
+class UploadTooLargeError(DomainError):
+    status_code = 413
+    code = "upload_too_large"
+
+
+class UnsupportedImageTypeError(DomainError):
+    status_code = 415
+    code = "unsupported_image_type"
+
+
 async def domain_error_handler(_: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, DomainError):  # pragma: no cover - defensive
         raise exc

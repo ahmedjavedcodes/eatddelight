@@ -1,9 +1,9 @@
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import CategoryInUseError, NotFoundError, SlugConflictError
-from app.models import AddOn, Category, Food, food_addons
+from app.models import AddOn, Category, Food, FoodVariant, food_addons
 from app.schemas.admin import (
     AddOnCreate,
     AddOnUpdate,
@@ -11,6 +11,7 @@ from app.schemas.admin import (
     CategoryUpdate,
     FoodCreate,
     FoodUpdate,
+    FoodVariantIn,
 )
 from app.services.slug import slugify
 
@@ -76,11 +77,37 @@ async def delete_category(session: AsyncSession, category_id: int) -> None:
 # --- Food ---
 
 
+async def _sync_variants(session: AsyncSession, food: Food, variants: list[FoodVariantIn]) -> None:
+    """Replace all of a food's variants with the given list.
+
+    Historical OrderItem rows keep their own price/label snapshot and their
+    ``variant_id`` FK is ``ON DELETE SET NULL``, so wiping and recreating here
+    never corrupts past orders.
+    """
+    await session.execute(delete(FoodVariant).where(FoodVariant.food_id == food.id))
+    for order, variant in enumerate(variants):
+        session.add(
+            FoodVariant(
+                food_id=food.id,
+                label=variant.label,
+                price=variant.price,
+                display_order=order,
+            )
+        )
+    await session.flush()
+
+
 async def create_food(session: AsyncSession, payload: FoodCreate) -> Food:
     await get_category_or_404(session, payload.category_id)
-    food = Food(**payload.model_dump())
+    data = payload.model_dump(exclude={"variants"})
+    if payload.variants:
+        data["price"] = min(v.price for v in payload.variants)
+    food = Food(**data)
     session.add(food)
     await session.flush()
+    if payload.variants:
+        await _sync_variants(session, food, payload.variants)
+    await session.refresh(food, attribute_names=["variants"])
     return food
 
 
@@ -93,12 +120,20 @@ async def get_food_or_404(session: AsyncSession, food_id: int) -> Food:
 
 async def update_food(session: AsyncSession, food_id: int, payload: FoodUpdate) -> Food:
     food = await get_food_or_404(session, food_id)
-    data = payload.model_dump(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True, exclude={"variants"})
     if "category_id" in data:
         await get_category_or_404(session, data["category_id"])
     for field, value in data.items():
         setattr(food, field, value)
+
+    if "variants" in payload.model_fields_set:
+        variants = payload.variants or []
+        await _sync_variants(session, food, variants)
+        if variants:
+            food.price = min(v.price for v in variants)
+
     await session.flush()
+    await session.refresh(food, attribute_names=["variants"])
     return food
 
 
@@ -106,6 +141,7 @@ async def set_food_availability(session: AsyncSession, food_id: int, is_availabl
     food = await get_food_or_404(session, food_id)
     food.is_available = is_available
     await session.flush()
+    await session.refresh(food, attribute_names=["variants"])
     return food
 
 
